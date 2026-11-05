@@ -8,10 +8,36 @@ import asyncHandler from '../utils/asyncHandler.js'
 import apiError from '../utils/apiError.js'
 import apiResponse from '../utils/apiResponse.js'
 
-
 const redisConnection = new IORedis(process.env.REDIS_URL || 'redis://127.0.0.1:6379', {
   maxRetriesPerRequest: null
 })
+
+const FEED_CACHE_TTL = 60
+const REEL_CACHE_TTL = 300
+const WATCHED_REELS_TTL = 86400
+
+const cacheKey = (prefix, ...parts) => [prefix, ...parts].filter(Boolean).join(':')
+
+const getCachedData = async (key) => {
+  const value = await redisConnection.get(key)
+
+  if (!value) return null
+
+  try {
+    return JSON.parse(value)
+  } catch (error) {
+    return null
+  }
+}
+
+const setCachedData = async (key, value, ttl = FEED_CACHE_TTL) => {
+  await redisConnection.set(key, JSON.stringify(value), 'EX', ttl)
+}
+
+const deleteCachedData = async (...keys) => {
+  if (!keys.length) return
+  await redisConnection.del(...keys)
+}
 
 export const reelUploadQueue = new Queue('reel-uploads', {
   connection: redisConnection
@@ -67,7 +93,6 @@ export const uploadReel = asyncHandler(async (req, res) => {
 
   const userId = req.user?._id || req.user?.id
   if (!userId) {
-    // If auth fails after multer saves the file, delete it
     if (req.file?.path && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path)
     }
@@ -104,6 +129,8 @@ export const uploadReel = asyncHandler(async (req, res) => {
     }
   )
 
+  await deleteCachedData('reels:feed')
+
   return res.status(202).json(
     new apiResponse(202, 'Reel upload accepted and is being processed', { reel })
   )
@@ -112,59 +139,46 @@ export const uploadReel = asyncHandler(async (req, res) => {
 export const getReels = asyncHandler(async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1)
   const limit = Math.min(9, Math.max(1, Number(req.query.limit) || 9))
-  const skip = (page - 1) * limit
 
-  const totalReels = await Reel.countDocuments()
+  const cacheKeyValue = cacheKey('reels:feed', page, limit)
+  const cachedReels = await getCachedData(cacheKeyValue)
 
-  if (totalReels === 0) {
+  if (cachedReels) {
     return res.status(200).json(
-      new apiResponse(200, 'No reels found', {
-        reels: [],
-        pagination: {
-          page,
-          limit,
-          totalReels: 0,
-          totalPages: 0,
-          hasNextPage: false,
-          hasPreviousPage: false
-        }
-      })
+      new apiResponse(200, 'Reels fetched successfully', cachedReels)
     )
   }
 
-  const randomReels = await Reel.aggregate([
-    { $sample: { size: totalReels } }
+  const skip = (page - 1) * limit
+
+  const [totalReels, reels] = await Promise.all([
+    Reel.countDocuments({ status: 'ready' }),
+    Reel.find({ status: 'ready' })
+      .populate('user', 'username email')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean()
   ])
 
-  const reelIds = randomReels.map((reel) => reel._id)
+  const totalPages = totalReels === 0 ? 0 : Math.ceil(totalReels / limit)
 
-  const reels = await Reel.find({ _id: { $in: reelIds } })
-    .populate('user', 'username email')
-    .lean()
+  const response = {
+    reels,
+    pagination: {
+      page,
+      limit,
+      totalReels,
+      totalPages,
+      hasNextPage: page < totalPages,
+      hasPreviousPage: page > 1
+    }
+  }
 
-  const shuffledOrder = new Map(
-    randomReels.map((reel, index) => [reel._id.toString(), index])
-  )
-
-  reels.sort((a, b) => {
-    return (shuffledOrder.get(a._id.toString()) ?? 0) - (shuffledOrder.get(b._id.toString()) ?? 0)
-  })
-
-  const paginatedReels = reels.slice(skip, skip + limit)
-  const totalPages = Math.ceil(totalReels / limit)
+  await setCachedData(cacheKeyValue, response, FEED_CACHE_TTL)
 
   return res.status(200).json(
-    new apiResponse(200, 'Reels fetched successfully', {
-      reels: paginatedReels,
-      pagination: {
-        page,
-        limit,
-        totalReels,
-        totalPages,
-        hasNextPage: page < totalPages,
-        hasPreviousPage: page > 1
-      }
-    })
+    new apiResponse(200, 'Reels fetched successfully', response)
   )
 })
 
@@ -175,13 +189,60 @@ export const getReelById = asyncHandler(async (req, res) => {
     throw new apiError(400, 'Reel id is required')
   }
 
+  const key = cacheKey('reel', reelId)
+  const cachedReel = await getCachedData(key)
+
+  if (cachedReel) {
+    return res.status(200).json(
+      new apiResponse(200, 'Reel fetched successfully', { reel: cachedReel })
+    )
+  }
+
   const reel = await Reel.findById(reelId).populate('user', 'username email').lean()
 
   if (!reel) {
     throw new apiError(404, 'Reel not found')
   }
 
+  await setCachedData(key, reel, REEL_CACHE_TTL)
+
   return res.status(200).json(
     new apiResponse(200, 'Reel fetched successfully', { reel })
+  )
+})
+
+export const markReelAsWatched = asyncHandler(async (req, res) => {
+  const userId = req.user?._id || req.user?.id
+  const { reelId } = req.params
+
+  if (!userId) {
+    throw new apiError(401, 'User not authenticated')
+  }
+
+  if (!reelId) {
+    throw new apiError(400, 'Reel id is required')
+  }
+
+  const watchedKey = cacheKey('watched:reels', userId.toString())
+  await redisConnection.sadd(watchedKey, reelId)
+  await redisConnection.expire(watchedKey, WATCHED_REELS_TTL)
+
+  return res.status(200).json(
+    new apiResponse(200, 'Reel marked as watched', { reelId })
+  )
+})
+
+export const getWatchedReels = asyncHandler(async (req, res) => {
+  const userId = req.user?._id || req.user?.id
+
+  if (!userId) {
+    throw new apiError(401, 'User not authenticated')
+  }
+
+  const watchedKey = cacheKey('watched:reels', userId.toString())
+  const watchedReels = await redisConnection.smembers(watchedKey)
+
+  return res.status(200).json(
+    new apiResponse(200, 'Watched reels fetched successfully', { reels: watchedReels })
   )
 })

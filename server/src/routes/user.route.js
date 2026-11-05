@@ -1,6 +1,13 @@
 import express from "express"
 import { register, login, logout, refresh } from "../controllers/auth.controller.js"
-import { uploadReel, uploadSingleVideo, getReels, getReelById } from "../controllers/reel.controller.js"
+import {
+  uploadReel,
+  uploadSingleVideo,
+  getReels,
+  getReelById,
+  markReelAsWatched,
+  getWatchedReels
+} from "../controllers/reel.controller.js"
 import { getMe, getUserProfile } from "../controllers/user.controller.js"
 import validate from "../middlewares/validation.js"
 import { registerFormSchema, loginFormSchema } from "../validation/userValidation.js"
@@ -20,5 +27,7 @@ route.use(auth)
 route.get("/me", getMe)
 route.post("/logout", logout)
 route.post("/reels/upload", uploadSingleVideo, uploadReel)
+// route.post("/reels/:reelId/watch", markReelAsWatched)
+// route.get("/reels/watched", getWatchedReels)
 
 export default route
