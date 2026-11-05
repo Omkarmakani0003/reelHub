@@ -16,7 +16,7 @@ const reelSchema = new mongoose.Schema(
     },
     videoUrl: {
       type: String,
-      required: true
+      default: ''
     },
     thumbnailUrl: {
       type: String,
@@ -24,11 +24,11 @@ const reelSchema = new mongoose.Schema(
     },
     cloudinaryPublicId: {
       type: String,
-      required: true
+      default: ''
     },
     duration: {
       type: Number,
-      required: true,
+      default: 0,
       max: 60
     },
     fileSize: {
@@ -38,6 +38,12 @@ const reelSchema = new mongoose.Schema(
     mimeType: {
       type: String,
       required: true
+    },
+    status: {
+      type: String,
+      enum: ['pending', 'processing', 'ready', 'failed'],
+      default: 'pending',
+      index: true
     }
   },
   {
