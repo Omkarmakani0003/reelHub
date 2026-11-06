@@ -1,24 +1,42 @@
-import viteLogo from './assets/vite.svg'
-import './App.css'
-import { Routes, Route } from 'react-router'
-import Login from './pages/Login'
-import Register from './pages/Register'
-import NotFound from './pages/NotFound'
-import Home from './pages/Home'
+import './App.css';
+import { Routes, Route, Navigate } from 'react-router-dom';
+import Login from './pages/Login';
+import Register from './pages/Register';
+import Home from './pages/Home';
+import Profile from './pages/Profile';
+import { AuthProvider } from './features/auth/context/AuthContext';
+import ProtectedRoute from './components/ProtectedRoute';
 
 function App() {
   return (
-    <Routes>
-      
-      <Route path="/login" element={<Login />} />
-      <Route path="/register" element={<Register />} />
-      <Route path="/home" element={<Home />} />
+    <AuthProvider>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
 
+        <Route
+          path="/reels"
+          element={
+            <ProtectedRoute>
+              <Home />
+            </ProtectedRoute>
+          }
+        />
 
-      <Route path="/*" element={<NotFound />} />
-    </Routes>
+        <Route
+          path="/profile"
+          element={
+            <ProtectedRoute>
+              <Profile />
+            </ProtectedRoute>
+          }
+        />
 
-  )
+        <Route path="/" element={<Navigate to="/login" replace />} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
+    </AuthProvider>
+  );
 }
 
-export default App
+export default App;

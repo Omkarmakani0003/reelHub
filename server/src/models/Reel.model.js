@@ -53,6 +53,7 @@ const reelSchema = new mongoose.Schema(
 
 reelSchema.index({ user: 1, createdAt: -1 })
 reelSchema.index({ status: 1, createdAt: -1 })
+reelSchema.index({ status: 1, _id: -1 })
 
 const Reel = mongoose.model('Reel', reelSchema)
 

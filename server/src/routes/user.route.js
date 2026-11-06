@@ -5,8 +5,7 @@ import {
   uploadSingleVideo,
   getReels,
   getReelById,
-  markReelAsWatched,
-  getWatchedReels
+  
 } from "../controllers/reel.controller.js"
 import { getMe, getUserProfile } from "../controllers/user.controller.js"
 import validate from "../middlewares/validation.js"

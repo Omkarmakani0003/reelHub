@@ -1,47 +1,19 @@
 import fs from 'fs'
 import path from 'path'
 import multer from 'multer'
-import { Queue } from 'bullmq'
-import IORedis from 'ioredis'
 import Reel from '../models/Reel.model.js'
 import asyncHandler from '../utils/asyncHandler.js'
 import apiError from '../utils/apiError.js'
 import apiResponse from '../utils/apiResponse.js'
-
-const redisConnection = new IORedis(process.env.REDIS_URL || 'redis://127.0.0.1:6379', {
-  maxRetriesPerRequest: null
-})
-
-const FEED_CACHE_TTL = 60
-const REEL_CACHE_TTL = 300
-const WATCHED_REELS_TTL = 86400
-
-const cacheKey = (prefix, ...parts) => [prefix, ...parts].filter(Boolean).join(':')
-
-const getCachedData = async (key) => {
-  const value = await redisConnection.get(key)
-
-  if (!value) return null
-
-  try {
-    return JSON.parse(value)
-  } catch (error) {
-    return null
-  }
-}
-
-const setCachedData = async (key, value, ttl = FEED_CACHE_TTL) => {
-  await redisConnection.set(key, JSON.stringify(value), 'EX', ttl)
-}
-
-const deleteCachedData = async (...keys) => {
-  if (!keys.length) return
-  await redisConnection.del(...keys)
-}
-
-export const reelUploadQueue = new Queue('reel-uploads', {
-  connection: redisConnection
-})
+import { enqueueReelUpload } from '../utils/reelQueue.js'
+import {
+  cacheKey,
+  deleteCachedData,
+  FEED_CACHE_TTL,
+  getCachedData,
+  REEL_CACHE_TTL,
+  setCachedData
+} from '../utils/reelCache.js'
 
 const tmpReelsDir = path.resolve(process.cwd(), 'tmp_reels')
 if (!fs.existsSync(tmpReelsDir)) {
@@ -111,23 +83,11 @@ export const uploadReel = asyncHandler(async (req, res) => {
     status: 'pending'
   })
 
-  await reelUploadQueue.add(
-    'process-reel-upload',
-    {
-      localPath: path.resolve(req.file.path),
-      reelId: reel._id.toString(),
-      userId: userId.toString()
-    },
-    {
-      attempts: 3,
-      backoff: {
-        type: 'exponential',
-        delay: 5000
-      },
-      removeOnComplete: true,
-      removeOnFail: false
-    }
-  )
+  await enqueueReelUpload({
+    localPath: path.resolve(req.file.path),
+    reelId: reel._id.toString(),
+    userId
+  })
 
   await deleteCachedData('reels:feed')
 
@@ -211,38 +171,35 @@ export const getReelById = asyncHandler(async (req, res) => {
   )
 })
 
-export const markReelAsWatched = asyncHandler(async (req, res) => {
-  const userId = req.user?._id || req.user?.id
-  const { reelId } = req.params
+// export const markReelAsWatched = asyncHandler(async (req, res) => {
+//   const userId = req.user?._id || req.user?.id
+//   const { reelId } = req.params
 
-  if (!userId) {
-    throw new apiError(401, 'User not authenticated')
-  }
+//   if (!userId) {
+//     throw new apiError(401, 'User not authenticated')
+//   }
 
-  if (!reelId) {
-    throw new apiError(400, 'Reel id is required')
-  }
+//   if (!reelId) {
+//     throw new apiError(400, 'Reel id is required')
+//   }
 
-  const watchedKey = cacheKey('watched:reels', userId.toString())
-  await redisConnection.sadd(watchedKey, reelId)
-  await redisConnection.expire(watchedKey, WATCHED_REELS_TTL)
+//   const result = await saveReelWatchState(userId, reelId)
 
-  return res.status(200).json(
-    new apiResponse(200, 'Reel marked as watched', { reelId })
-  )
-})
+//   return res.status(200).json(
+//     new apiResponse(200, 'Reel marked as watched', result)
+//   )
+// })
 
-export const getWatchedReels = asyncHandler(async (req, res) => {
-  const userId = req.user?._id || req.user?.id
+// export const getWatchedReels = asyncHandler(async (req, res) => {
+//   const userId = req.user?._id || req.user?.id
 
-  if (!userId) {
-    throw new apiError(401, 'User not authenticated')
-  }
+//   if (!userId) {
+//     throw new apiError(401, 'User not authenticated')
+//   }
 
-  const watchedKey = cacheKey('watched:reels', userId.toString())
-  const watchedReels = await redisConnection.smembers(watchedKey)
+//   const watchedReels = await fetchWatchedReelsForUser(userId)
 
-  return res.status(200).json(
-    new apiResponse(200, 'Watched reels fetched successfully', { reels: watchedReels })
-  )
-})
+//   return res.status(200).json(
+//     new apiResponse(200, 'Watched reels fetched successfully', { reels: watchedReels })
+//   )
+// })

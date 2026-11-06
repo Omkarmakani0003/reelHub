@@ -91,7 +91,7 @@ export const login = asyncHandler(async (req, res) => {
 export const refresh = asyncHandler(async (req, res) => {
 
     const incomingRefreshToken = req.cookies?.REFRESH_TOKEN || req.body?.refreshToken;
-     console.log(req.cookies?.REFRESH_TOKEN)
+    
     if (!incomingRefreshToken) {
         throw new apiError(401, "Refresh token is missing");
     }
@@ -147,24 +147,21 @@ export const refresh = asyncHandler(async (req, res) => {
 export const logout = asyncHandler(async (req, res) => {
 
     const refreshToken = req.cookies?.REFRESH_TOKEN || req.body?.refreshToken;
-    const accessToken = req.header('Authorization')?.replace('Bearer ', '') || req.body?.accessToken;
-
-    if (!refreshToken && !accessToken) throw new apiError(401, "Unauthorized");
+    //const accessToken = req.header('Authorization')?.replace('Bearer ', '') || req.body?.accessToken;
+ 
+    if (!refreshToken) throw new apiError(401, "Unauthorized");
 
     if (refreshToken) {
         await RefreshToken.findOneAndDelete({ refreshToken });
     }
 
-    if (accessToken || refreshToken) {
+    if (refreshToken) {
         await BlackListToken.findOneAndUpdate(
             {
-                $or: [
-                    { accessToken: accessToken },
-                    { refreshToken: refreshToken  }
-                ]
+                refreshToken: refreshToken  
             },
             {
-                accessToken: accessToken,
+
                 refreshToken: refreshToken
             },
             { upsert: true, new: true }
